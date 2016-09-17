@@ -71,25 +71,29 @@ module TextBuffer
     end
 
     private def insert_text(text)
-      offset = @buffers[:append].length
       @buffers[:append] += text
-
-      offset
+      @buffers[:append].length - text.length
     end
 
     private def insert_beginning(text, coord)
       offset = insert_text(text)
       @chain[coord.index, 0] = Piece.new(:append, offset, text.length)
+
+      @undo << -> () { @chain.slice!(coord.index) }
     end
 
     private def insert_end(text, coord)
       offset = insert_text(text)
       @chain[coord.index + 1, 0] = Piece.new(:append, offset, text.length)
+
+      @undo << -> () { @chain.slice!(coord.index + 1) }
     end
 
     private def insert_middle(text, coord)
       offset = insert_text(text)
       split_chain(at: coord, insert: Piece.new(:append, offset, text.length))
+
+      @undo << -> () { @chain.slice!(coord.index + 1) }
     end
 
     # delete from the buffer breaks into four situations
@@ -125,8 +129,18 @@ module TextBuffer
       end
 
       # remove the dead pieces
-      @chain.slice! sindex...eindex
+      removed = @chain.slice! sindex...eindex
+      @undo << -> () { @chain[sindex, 0] = removed }
     end
+
+    # undo/redo
+
+    def undo
+      return unless @undo.length > 0
+      @undo.length && @undo.pop.call
+    end
+
+    # utilities
 
     private def find_coord(at:)
       index = @chain.find_index { |p| (at -= p.length) <= 0 }

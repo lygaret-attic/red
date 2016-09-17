@@ -76,13 +76,23 @@ RSpec.describe "TextBuffer" do
   end
 
   context "#undo" do
-    before { pending("undo not implemented") }
     subject { TextBuffer.new("one two three") }
 
     it "can undo an insertion" do
       subject.insert("blah", at: 2)
       subject.undo
       expect(subject.contents).to eq("one two three")
+    end
+
+    it "can undo multiple insertions" do
+      subject.insert("what's this? ", at: 0)
+      subject.insert("blah", at: 2)
+      subject.insert("baz", at: 10)
+
+      subject.undo
+      subject.undo
+
+      expect(subject.contents).to eq("what's this? one two three")
     end
 
     it "can undo a deletion" do

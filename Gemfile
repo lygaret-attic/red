@@ -1,8 +1,9 @@
 source "https://rubygems.org"
 
-gem "curses"
+gem "dispel"
 
 group :development do
   gem "byebug"
   gem "rspec"
+  gem "ruby-prof"
 end

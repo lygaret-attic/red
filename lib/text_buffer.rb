@@ -30,18 +30,31 @@ module TextBuffer
       @undo   = []
     end
 
+    def inspect
+      "TextBuffer::Buffer"
+    end
+
     # to get string contents for the buffer, walk the chain
 
     def contents
-      content  = @chain.map do |p|
+      each_line.force.join("\n")
+    end
+
+    def each_span
+      @chain.lazy.map do |p|
         buffer = @buffers[p.buffer]
         assert("unknown buffer type in chain")  { !buffer.nil? }
         assert("invalid piece length in chain") { p.offset + p.length <= buffer.length }
 
         buffer[p.offset, p.length]
       end
+    end
 
-      content.join
+    def each_line
+      each_span
+        .flat_map { |s| s.each_byte.lazy }
+        .chunk    { |c| c == 0x0a ? :_separator : true }
+        .map      { |_, l| l.pack("U*") }
     end
 
     # insert into the buffer breaks into three situations

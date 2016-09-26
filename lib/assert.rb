@@ -2,21 +2,27 @@ require 'forwardable'
 require 'singleton'
 
 module Assert
-  class << self
-    extend Forwardable
+  class AssertionError < StandardError; end
 
-    def enable
-      @instance = Assert::RealAssert.instance
+  def self.patch_kernel
+    Kernel.module_eval do
+      def assert(*args, &block)
+        Assert.assert(*args, &block)
+      end
     end
-
-    def disable
-      @instance = Assert::NullAssert.instance
-    end
-
-    def_delegator :@instance, :assert
   end
 
-  class AssertionError < StandardError; end
+  def self.enable
+    @instance = Assert::RealAssert.instance
+  end
+
+  def self.disable
+    @instance = Assert::NullAssert.instance
+  end
+
+  def self.assert(message, &block)
+    @instance.assert(message, &block)
+  end
 
   class NullAssert
     include Singleton
@@ -28,8 +34,6 @@ module Assert
 
     def assert(message)
       raise AssertionError, message unless yield
-    rescue => ex
-      raise AssertionError, "#{message}, cause: #{ex}"
     end
   end
 end
@@ -37,9 +41,5 @@ end
 # start out disabled
 Assert.disable
 
-# mix assert into Kernel
-module Kernel
-  def assert(*args)
-    Assert.assert(*args)
-  end
-end
+# add #assert to kernel
+Assert.patch_kernel

@@ -1,4 +1,5 @@
 require './lib/assert'
+require './lib/logger'
 
 module TextBuffer
 
@@ -15,10 +16,13 @@ module TextBuffer
   # Constructing the textual content of the buffer requires iterating through the piece chainmmap
   # in order, and returning the text from the buffers referred to in the piece.
 
-  Piece = Struct.new("Piece", :buffer, :offset, :length) 
-  Coord = Struct.new("Coord", :piece, :index, :offset)
-
   class Buffer
+
+    Piece     = Struct.new("Piece", :buffer, :offset, :length)
+    Coord     = Struct.new("Coord", :piece, :index, :offset)
+    LineCache = Struct.new("LineCache", :offset, :count)
+
+    PAGESIZE  = 4096
 
     def initialize(text)
       @buffers = {
@@ -26,8 +30,21 @@ module TextBuffer
         append: ""
       }
 
-      @chain  = [Piece.new(:file, 0, text.length)]
       @undo   = []
+
+      @chain  = build_chain
+      @lines  = [0]
+    end
+
+    # build the chain
+    # initially, we create a single piece in the chain to represent each PAGESIZE of the text
+    def build_chain
+      page_count  = @buffers[:file].length / PAGESIZE
+      last_remain = @buffers[:file].length % PAGESIZE
+      last_offset = @buffers[:file].length - last_remain
+
+      chain  = page_count.times.collect { |n| Piece.new(:file, n * PAGESIZE, PAGESIZE) }
+      chain << Piece.new(:file, last_offset, last_remain)
     end
 
     def inspect
@@ -37,24 +54,70 @@ module TextBuffer
     # to get string contents for the buffer, walk the chain
 
     def contents
-      each_line.force.join("\n")
+      each_line.force.join
     end
 
-    def each_span
-      @chain.lazy.map do |p|
-        buffer = @buffers[p.buffer]
-        assert("unknown buffer type in chain")  { !buffer.nil? }
-        assert("invalid piece length in chain") { p.offset + p.length <= buffer.length }
+    def each_span(from: 0)
+      @chain.lazy
+        .drop_while { |p| (from -= p.length) > 0 }
+        .map        { |p| @buffers[p.buffer][p.offset + from, p.length - from] }
+    end
 
-        buffer[p.offset, p.length]
+    def each_line(from: 0)
+      assert("line #{from} is underflow") { || from >= 0 }
+
+      # line_offset      is the closest line to requested
+      # codepoint_offset is codepoint at which line_offset line starts
+
+      line_index  = [@lines.length - 1, from].min
+      line_offset = @lines[line_index] + 1
+
+      # we can skip over buffer pieces to the requested codepoint offset
+      # NOTE:
+      # line_inset will be the inset from the beginning of the new first
+      # piece after this is complete.
+
+      piece_inset = line_offset - 1
+      pieces = @chain.drop_while do |p|
+        if piece_inset >= p.length
+          piece_inset -= p.length
+          true
+        else
+          false
+        end
       end
-    end
 
-    def each_line
-      each_span
-        .flat_map { |s| s.each_byte.lazy }
-        .chunk    { |c| c == 0x0a ? :_separator : true }
-        .map      { |_, l| l.pack("U*") }
+      # flat map the pieces into a stream of codepoints
+      # and position at the first codepoint in the requested line
+      
+      codepoints = pieces.lazy.flat_map { |p| @buffers[p.buffer][p.offset, p.length].each_codepoint.lazy }
+      codepoints = codepoints.drop(piece_inset)
+      
+      # now, chunk the stream into lines
+      # concurrently, update the line cache as we go
+
+      chunked = codepoints.each_with_index.chunk do |c, index|
+        index += line_offset # fix our codepoint position with what we dropped
+        begin
+          line_offset
+        ensure
+          if c == 0x0a
+            line_offset += 1
+            if index > @lines.last
+              @lines << index
+              RedLogger.logger.info "added new line #{@lines.length} @ #{index + 1}"
+            end
+          end
+        end
+      end
+
+      # now, drop the number of lines I we skipped
+      lines = chunked.drop(from - line_index)
+
+      # finally, extract the text
+      lines.map do |linum, cp|
+        cp.map { |(c, _)| c }.pack("U*")
+      end
     end
 
     # insert into the buffer breaks into three situations

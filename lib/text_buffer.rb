@@ -30,9 +30,10 @@ module TextBuffer
         append: ""
       }
 
+      @chain  = build_chain
       @undo   = []
 
-      @chain  = build_chain
+      # line cache
       @lines  = [0]
     end
 
@@ -67,89 +68,43 @@ module TextBuffer
       assert("line #{from} is underflow") { || from >= 0 }
 
       line_index  = [@lines.length - 1, from].min
-      line_offset = @lines[line_index] + 1
-      coord       = find_coord(at: line_offset)
-        
-      line_accum  = []
-      chain       = @chain.drop(coord.index).to_enum.with_index(line_index)
+      line_offset = @lines[line_index]
+      line_coord  = find_coord(at: line_offset)
 
-      Enumerator::Lazy.new(chain) do |yielder, piece, index|
-        next unless index >= from
+      char_offset = line_offset
 
-        offset = index == 0 ? coord.offset : 0
+      accum = []
+      iter  = @chain.drop(line_coord.index).to_enum.with_index
 
-        index  = 0
-        length = 0
+      Enumerator::Lazy.new(iter) do |yielder, piece, pi|
+        offset = pi == 0 ? line_coord.offset : 0
+        buffer = @buffers[piece.buffer][piece.offset + offset, piece.length - offset]
 
-        @buffers[piece.buffer][piece.offset + offset, piece.length - offset].each_codepoint do |cp|
-          length += 1
-          if cp == 0x0A
-            yielder << line_accum.pack("U*")
-            line_accum.clear
+        # iterate through the characters in the buffer, to chunk into lines
+        buffer.each_char do |char, index|
+          accum << char
+          char_offset += 1
+
+          next unless char == "\n"
+          line_index += 1
+
+          # only return the line if it's in the set we're asking for
+          if line_index >= from
+            yielder.yield accum.join
           end
+
+          # only record new line offsets if we're past our cache end
+          if line_index > @lines.length
+            @lines << char_offset
+          end
+
+          accum.clear
         end
 
         # after last piece, yield the rest of the text
-        if @chain.last == piece && !line_accum.empty?
-          yielder << line_accum.pack("U*")
+        if @chain.last == piece && !accum.empty?
+          yielder << accum.join
         end
-      end
-    end
-
-    def each_line(from: 0)
-      assert("line #{from} is underflow") { || from >= 0 }
-
-      # line_offset      is the closest line to requested
-      # codepoint_offset is codepoint at which line_offset line starts
-
-      line_index  = [@lines.length - 1, from].min
-      line_offset = @lines[line_index] + 1
-
-      # we can skip over buffer pieces to the requested codepoint offset
-      # NOTE:
-      # line_inset will be the inset from the beginning of the new first
-      # piece after this is complete.
-
-      piece_inset = line_offset - 1
-      pieces = @chain.drop_while do |p|
-        if piece_inset >= p.length
-          piece_inset -= p.length
-          true
-        else
-          false
-        end
-      end
-
-      # flat map the pieces into a stream of codepoints
-      # and position at the first codepoint in the requested line
-      
-      codepoints = pieces.lazy.flat_map { |p| @buffers[p.buffer][p.offset, p.length].each_codepoint.lazy }
-      codepoints = codepoints.drop(piece_inset)
-      
-      # now, chunk the stream into lines
-      # concurrently, update the line cache as we go
-
-      chunked = codepoints.each_with_index.chunk do |c, index|
-        index += line_offset # fix our codepoint position with what we dropped
-        begin
-          line_offset
-        ensure
-          if c == 0x0a
-            line_offset += 1
-            if index > @lines.last
-              @lines << index
-              RedLogger.logger.info "added new line #{@lines.length} @ #{index + 1}"
-            end
-          end
-        end
-      end
-
-      # now, drop the number of lines I we skipped
-      lines = chunked.drop(from - line_index)
-
-      # finally, extract the text
-      lines.map do |linum, cp|
-        cp.map { |(c, _)| c }.pack("U*")
       end
     end
 
@@ -277,6 +232,8 @@ module TextBuffer
   end
 
   def self.open(path)
-    Buffer.new(File.read(path))
+    File.open(path) do |file|
+      Buffer.new(file.read)
+    end
   end
 end

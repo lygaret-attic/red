@@ -8,7 +8,7 @@ Assert.enable
 class Application
 
   def initialize
-    @buffer    = TextBuffer.open('./test.text')
+    @buffer    = TextBuffer.open('/var/log/kern.log.1')
     @scrollpos = 0
   end
 
@@ -16,10 +16,19 @@ class Application
     # start with the file content
     # we want to display the current window's text
     lines = @buffer.lazy_lines(from: @scrollpos)
-    text  = lines.take(screen.lines - 1).force.join
+    lines = lines.take(screen.lines - 1).force
+
+    # pad to the bottom
+    if lines.length < screen.lines - 1
+      lines.concat((screen.lines - 1 - lines.length).times.collect { "\n" })
+    end
+
+    # add the status line
+    lcache = @buffer.instance_variable_get(:@lines)
+    lines << "::::::: @#{@scrollpos} | #{lcache.length} -> #{lcache.last}"
 
     # render the screen
-    screen.draw text
+    screen.draw lines.join
   end
 
   def event(screen, key)

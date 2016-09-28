@@ -8,14 +8,14 @@ Assert.enable
 class Application
 
   def initialize
-    @buffer    = TextBuffer.open('/var/log/kern.log')
+    @buffer    = TextBuffer.open('./test.text')
     @scrollpos = 0
   end
 
   def draw(screen)
     # start with the file content
     # we want to display the current window's text
-    lines = @buffer.each_line(from: @scrollpos)
+    lines = @buffer.lazy_lines(from: @scrollpos)
     text  = lines.take(screen.lines - 1).force.join
 
     # render the screen

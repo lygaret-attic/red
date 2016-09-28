@@ -63,6 +63,39 @@ module TextBuffer
         .map        { |p| @buffers[p.buffer][p.offset + from, p.length - from] }
     end
 
+    def lazy_lines(from: 0)
+      assert("line #{from} is underflow") { || from >= 0 }
+
+      line_index  = [@lines.length - 1, from].min
+      line_offset = @lines[line_index] + 1
+      coord       = find_coord(at: line_offset)
+        
+      line_accum  = []
+      chain       = @chain.drop(coord.index).to_enum.with_index(line_index)
+
+      Enumerator::Lazy.new(chain) do |yielder, piece, index|
+        next unless index >= from
+
+        offset = index == 0 ? coord.offset : 0
+
+        index  = 0
+        length = 0
+
+        @buffers[piece.buffer][piece.offset + offset, piece.length - offset].each_codepoint do |cp|
+          length += 1
+          if cp == 0x0A
+            yielder << line_accum.pack("U*")
+            line_accum.clear
+          end
+        end
+
+        # after last piece, yield the rest of the text
+        if @chain.last == piece && !line_accum.empty?
+          yielder << line_accum.pack("U*")
+        end
+      end
+    end
+
     def each_line(from: 0)
       assert("line #{from} is underflow") { || from >= 0 }
 

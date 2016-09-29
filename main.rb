@@ -8,15 +8,18 @@ Assert.enable
 class Application
 
   def initialize
-    @buffer    = TextBuffer.open('/var/log/kern.log.1')
+    @buffer    = TextBuffer.read(ARGF)
     @scrollpos = 0
   end
 
   def draw(screen)
+    @scrollpos = [@scrollpos, 0].max
+
     # start with the file content
     # we want to display the current window's text
     lines = @buffer.lazy_lines(from: @scrollpos)
-    lines = lines.take(screen.lines - 1).force
+    lines = lines.take(screen.lines - 1).force.to_enum
+    lines = lines.with_index(@scrollpos).map { |l, i| "#{i.to_s.rjust(4)}: #{l}" }
 
     # pad to the bottom
     if lines.length < screen.lines - 1

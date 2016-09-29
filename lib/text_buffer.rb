@@ -231,6 +231,10 @@ module TextBuffer
     Buffer.new(text)
   end
 
+  def self.read(io)
+    Buffer.new(io.read)
+  end
+
   def self.open(path)
     File.open(path) do |file|
       Buffer.new(file.read)
